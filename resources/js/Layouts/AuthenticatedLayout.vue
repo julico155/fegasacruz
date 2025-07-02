@@ -94,9 +94,7 @@ const performSearch = () => {
                         <div class="flex">
                             <div class="flex shrink-0 items-center">
                                 <Link :href="route('dashboard')">
-                                    <ApplicationLogo
-                                        :class="['block h-9 w-auto fill-current', currentThemeKey === 'dark' ? 'text-gray-200' : 'text-gray-800']"
-                                    />
+                                    <img src="/inf513/grupo01sa/proyecto2/fegasacruz/public/images/logo.jpg" alt="Logo de la Aplicación" class="h-20 w-20 object-contain" />
                                 </Link>
                             </div>
 
