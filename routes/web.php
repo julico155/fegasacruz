@@ -29,7 +29,10 @@ Route::post('/cart/add', [VentaController::class, 'addToCart'])->name('cart.add'
 Route::post('/cart/update', [VentaController::class, 'updateCart'])->name('cart.update');
 Route::post('/cart/remove', [VentaController::class, 'removeFromCart'])->name('cart.remove');
 Route::get('/cart', [VentaController::class, 'showCart'])->name('cart.show');
-
+Route::get('/venta/pago-exitoso', [VentaController::class, 'pagoExitoso'])->name('venta.pagoExitoso');
+Route::get('/carrito', [VentaController::class, 'showCart'])->name('cart.show');
+Route::post('/consultartransaccion', [VentaController::class, 'ConsultarEstado'])->name('consultar.estado');
+Route::post('/actualizar-estado-venta', [VentaController::class, 'actualizarEstadoVentaPorPolling'])->name('actualizar.estado.venta');
 
 Route::middleware('auth')->group(function () {
 
@@ -37,13 +40,17 @@ Route::middleware('auth')->group(function () {
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 
+    Route::get('/venta/pago-exitoso', [VentaController::class, 'pagoExitoso'])->name('venta.pagoExitoso');
 
 
     Route::get('/search', [SearchController::class, 'globalSearch'])->name('global.search');
     Route::post('/checkout', [VentaController::class, 'checkout'])->name('checkout');
 
+    Route::post('/checkout-qr', [VentaController::class, 'checkoutQR'])->name('checkout.qr');
+
     Route::get('/my-purchases', [VentaController::class, 'mySales'])->name('my.sales.index');
-    
+    Route::get('/mis-compras', [VentaController::class, 'mySales'])->name('venta.mySales');
+
 });
 
 Route::middleware('auth')->prefix('admin')->name('admin.')->group(function () {

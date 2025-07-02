@@ -1,7 +1,9 @@
-// resources/js/Pages/Shop/Cart.vue
+<!-- resources/js/Pages/Shop/Cart.vue -->
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
+import axios from 'axios';
+import { ref } from 'vue';
 
 // Definición de las propiedades (props) que este componente Vue espera recibir.
 const props = defineProps({
@@ -23,8 +25,16 @@ const removeForm = useForm({
     producto_id: null
 });
 
-// Formulario para el checkout
+// Formulario para el checkout (ya no se usa para la petición principal, solo para el botón)
 const checkoutForm = useForm({});
+
+// Variables reactivas para el QR y el estado del pago
+const qrImageBase64 = ref(null); // Renombrado para claridad
+const nroTransaccion = ref(null);
+const ventaId = ref(null); // Para almacenar el ID de la venta creada en el backend
+const estadoPago = ref(null);
+const showQrModal = ref(false); // Controla la visibilidad del modal del QR
+let checkInterval = null; // Para el polling
 
 /**
  * Actualiza la cantidad de un producto en el carrito.
@@ -32,7 +42,7 @@ const checkoutForm = useForm({});
  * @param {number} newQuantity - La nueva cantidad deseada.
  */
 const updateQuantity = (item, newQuantity) => {
-    if (newQuantity < 0) newQuantity = 0; // Evitar cantidades negativas
+    if (newQuantity < 0) newQuantity = 0;
     updateForm.producto_id = item.id;
     updateForm.cantidad = newQuantity;
     updateForm.post(route('cart.update'), {
@@ -69,6 +79,7 @@ const removeItem = (productoId) => {
 
 /**
  * Procede al checkout.
+ * Esta función ahora llama a la función `handleCheckout` que usa Axios.
  */
 const proceedToCheckout = () => {
     if (props.cartItems.length === 0) {
@@ -77,20 +88,11 @@ const proceedToCheckout = () => {
     }
     if (!props.auth.user) {
         alert('Debes iniciar sesión para completar tu compra.');
-        // Redirigir al login si no está autenticado
         window.location.href = route('login');
         return;
     }
-    checkoutForm.post(route('checkout'), {
-        onSuccess: () => {
-            console.log('Checkout exitoso.');
-            // Inertia redirigirá a la página de éxito de la venta
-        },
-        onError: (errors) => {
-            console.error('Error durante el checkout:', errors);
-            alert('Error durante el checkout: ' + (errors.cart || 'Verifica el stock de tus productos.'));
-        }
-    });
+    // Llama a la función que maneja la petición Axios y el QR
+    handleCheckout();
 };
 
 /**
@@ -100,6 +102,147 @@ const proceedToCheckout = () => {
  */
 const ensureFloat = (price) => {
     return parseFloat(price);
+};
+
+// --- Lógica de PagoFácil y Polling ---
+
+/**
+ * Maneja el proceso de checkout, llama al backend para obtener el QR.
+ */
+const handleCheckout = async () => {
+    try {
+        // Deshabilita el botón mientras se procesa
+        checkoutForm.processing = true;
+
+        // La ruta de checkout ahora devuelve JSON
+        const response = await axios.post(route('checkout'));
+
+        if (response.data.success) {
+            qrImageBase64.value = response.data.qrImageBase64;
+            nroTransaccion.value = response.data.nroTransaccion;
+            ventaId.value = response.data.ventaId; // Guarda el ID de la venta
+
+            showQrModal.value = true; // Muestra el modal del QR
+            iniciarConsultaEstado(); // Inicia el polling
+        } else {
+            alert(response.data.error || 'Error al obtener el QR de pago.');
+        }
+    } catch (error) {
+        console.error('Error en handleCheckout:', error);
+        // Manejo de errores de la petición (ej. 400, 500)
+        if (error.response && error.response.data && error.response.data.error) {
+            alert('Error: ' + error.response.data.error);
+        } else {
+            alert('Ocurrió un error inesperado al procesar el pago.');
+        }
+    } finally {
+        // Habilita el botón de nuevo
+        checkoutForm.processing = false;
+    }
+};
+
+/**
+ * Actualiza el estado del pedido en la base de datos de tu Laravel.
+ * Se llama cuando el polling detecta que el pago fue exitoso (estadoPago.value === 2).
+ */
+const actualizarEstadoPedido = async () => {
+    if (!ventaId.value) {
+        console.error('No hay ID de venta para actualizar el estado.');
+        return;
+    }
+    try {
+        // Llama al nuevo endpoint API para actualizar el estado de la venta en el backend
+        const updateResponse = await axios.post(route('actualizar.estado.venta'), {
+            venta_id: ventaId.value,
+            // Puedes enviar el nroTransaccion si quieres guardarlo en este punto
+            // nroTransaccion: nroTransaccion.value,
+            // O el estado específico si tu backend lo espera
+            // estado: 'completado',
+        });
+
+        if (updateResponse.data.success) {
+            console.log('Estado de venta actualizado en DB por polling:', updateResponse.data.message);
+            // Solo redirigimos si la actualización en la DB fue exitosa
+            window.location.href = route('venta.pagoExitoso'); // Redirige a la página de éxito
+        } else {
+            console.error('Fallo al actualizar estado de venta por polling:', updateResponse.data.message);
+            alert('El pago fue exitoso, pero hubo un problema al actualizar el estado de la venta. Por favor, revisa tus compras.');
+            // Aún redirigimos para no dejar al usuario atascado, pero con una advertencia
+            window.location.href = route('venta.pagoExitoso');
+        }
+    } catch (error) {
+        console.error('Error al actualizar el estado del pedido:', error.message);
+        alert('Error al actualizar el estado del pedido. Por favor, revisa tus compras.');
+    }
+};
+
+/**
+ * Consulta el estado de la transacción de PagoFácil.
+ * Se ejecuta repetidamente con setInterval.
+ */
+const consultarEstadoTransaccion = async () => {
+    if (!nroTransaccion.value) {
+        detenerConsultaEstado(); // No hay transacción para consultar
+        return;
+    }
+
+    try {
+        // Llama al endpoint de tu Laravel para consultar el estado en PagoFácil
+        const response = await axios.post( '/consultartransaccion', {
+            tnTransaccion: nroTransaccion.value,
+        });
+
+        estadoPago.value = response.data.estadoTransaccion; // Obtiene el código de estado
+
+        if (estadoPago.value === 2) { // 2 significa "Pagado" en PagoFácil
+            detenerConsultaEstado();
+            alert('¡Pago exitoso! Redirigiendo...');
+            await actualizarEstadoPedido(); // Redirige a la página de éxito
+        } else if (estadoPago.value === 4) { // 4 significa "Expirado" en PagoFácil
+            detenerConsultaEstado();
+            alert('La transacción ha vencido. Intenta nuevamente.');
+            closeQrModal(); // Cierra el modal
+        }
+        // Puedes añadir más lógica para otros estados si es necesario
+        console.log('Estado de transacción:', estadoPago.value, response.data.message);
+    } catch (error) {
+        console.error('Error al consultar el estado de la transacción:', error.message);
+        detenerConsultaEstado(); // Detener el polling en caso de error
+        alert('Error al consultar el estado del pago. Por favor, revisa tus compras.');
+        closeQrModal(); // Cierra el modal
+    }
+};
+
+/**
+ * Inicia el polling para consultar el estado de la transacción.
+ */
+const iniciarConsultaEstado = () => {
+    detenerConsultaEstado(); // Asegura que no haya intervalos duplicados
+    checkInterval = setInterval(consultarEstadoTransaccion, 10000); // Consulta cada 10 segundos
+    console.log('Polling iniciado para la transacción:', nroTransaccion.value);
+};
+
+/**
+ * Detiene el polling.
+ */
+const detenerConsultaEstado = () => {
+    if (checkInterval) {
+        clearInterval(checkInterval);
+        checkInterval = null;
+        console.log('Polling detenido.');
+    }
+};
+
+/**
+ * Cierra el modal del QR y limpia los datos.
+ */
+const closeQrModal = () => {
+    detenerConsultaEstado(); // Detener el polling al cerrar el modal
+    qrImageBase64.value = null;
+    nroTransaccion.value = null;
+    ventaId.value = null;
+    estadoPago.value = null;
+    showQrModal.value = false;
 };
 </script>
 
@@ -172,6 +315,28 @@ const ensureFloat = (price) => {
                 </div>
             </div>
         </div>
+
+        <!-- Modal de Pago QR -->
+        <div v-if="showQrModal" class="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full text-center relative">
+                <button @click="closeQrModal" class="absolute top-3 right-3 text-gray-500 hover:text-gray-700 text-2xl font-bold">&times;</button>
+                <h3 class="text-2xl font-bold mb-4 text-gray-800">Escanea para Pagar</h3>
+                <p class="text-gray-700 mb-4">Número de Transacción: <strong>{{ nroTransaccion }}</strong></p>
+                <p class="text-gray-700 mb-4">Estado: <strong>{{ estadoPago || 'Esperando pago...' }}</strong></p>
+                <div v-if="qrImageBase64" class="flex justify-center mb-6">
+                    <img :src="qrImageBase64" alt="Código QR de Pago" class="w-64 h-64 object-contain border p-2 rounded-md bg-gray-50"/>
+                </div>
+                <p class="text-sm text-gray-600 mb-4">
+                    Por favor, escanea este código QR con tu aplicación de banca móvil para completar el pago.
+                    La página se actualizará automáticamente cuando el pago sea detectado.
+                </p>
+                <button @click="closeQrModal" class="inline-block bg-red-600 text-white py-2 px-4 rounded-md hover:bg-red-700 transition duration-200">
+                    Cerrar
+                </button>
+                <Link :href="route('venta.mySales')" class="ml-2 inline-block bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition duration-200">
+                    Ir a Mis Compras
+                </Link>
+            </div>
+        </div>
     </AuthenticatedLayout>
 </template>
-
