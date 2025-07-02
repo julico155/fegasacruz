@@ -1,5 +1,5 @@
 <script setup>
-import ApplicationLogo from '@/Components/ApplicationLogo.vue';
+// import ApplicationLogo from '@/Components/ApplicationLogo.vue'; // Ya no necesitamos este import
 import { Link } from '@inertiajs/vue3';
 </script>
 
@@ -9,7 +9,9 @@ import { Link } from '@inertiajs/vue3';
     >
         <div>
             <Link href="/">
-                <ApplicationLogo class="h-20 w-20 fill-current text-gray-500" />
+                <!-- Reemplazado ApplicationLogo por la imagen directa -->
+                <img src="/images/logo.jpg" alt="Logo de la Aplicación" class="h-20 w-20 object-contain" />
+                <!-- Puedes ajustar las clases de Tailwind (h-20 w-20) según el tamaño deseado para tu logo -->
             </Link>
         </div>
 
